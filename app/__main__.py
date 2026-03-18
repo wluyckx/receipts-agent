@@ -5,6 +5,7 @@ Builds the Agent Card, initializes the database, and starts the
 A2A Starlette application with health endpoint.
 
 CHANGELOG:
+- 2026-03-18: Pass settings and db_path to executor (STORY-074)
 - 2026-03-18: Initial entry point (STORY-073)
 
 TODO:
@@ -61,7 +62,7 @@ def main() -> None:
     agent_card = create_agent_card(port=settings.PORT)
 
     handler = DefaultRequestHandler(
-        agent_executor=ReceiptsAgentExecutor(),
+        agent_executor=ReceiptsAgentExecutor(settings=settings, db_path=settings.DATABASE_PATH),
         task_store=InMemoryTaskStore(),
     )
 
