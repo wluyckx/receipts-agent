@@ -59,7 +59,7 @@ def main() -> None:
     asyncio.run(startup(settings))
 
     # Build A2A application
-    agent_card = create_agent_card(port=settings.PORT)
+    agent_card = create_agent_card(public_url=settings.PUBLIC_URL)
 
     handler = DefaultRequestHandler(
         agent_executor=ReceiptsAgentExecutor(settings=settings, db_path=settings.DATABASE_PATH),

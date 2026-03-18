@@ -21,19 +21,19 @@ class TestAgentCard:
         """Agent card should contain name, description, version, url, capabilities."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         assert card.name == "Receipts Agent"
         assert card.description is not None
         assert len(card.description) > 0
         assert card.version is not None
-        assert card.url == "http://localhost:9100/"
+        assert card.url == "http://receipts-agent:9100/"
         assert card.capabilities is not None
 
     def test_agent_card_has_skills(self):
         """Agent card should have at least one placeholder skill."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         assert card.skills is not None
         assert len(card.skills) >= 1
 
@@ -41,7 +41,7 @@ class TestAgentCard:
         """Each skill should have id, name, description."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         skill = card.skills[0]
         assert skill.id is not None
         assert skill.name is not None
@@ -51,29 +51,29 @@ class TestAgentCard:
         """Agent card should specify text as default input/output mode."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         assert "text" in card.default_input_modes
         assert "text" in card.default_output_modes
 
-    def test_agent_card_url_uses_port(self):
-        """Agent card URL should reflect the configured port."""
+    def test_agent_card_url_uses_public_url(self):
+        """Agent card URL should reflect the configured public URL."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9200)
-        assert "9200" in card.url
+        card = create_agent_card(public_url="http://my-agent:9200")
+        assert "my-agent:9200" in card.url
 
     def test_agent_card_has_four_skills(self):
         """Agent card should have exactly 4 real skills."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         assert len(card.skills) == 4
 
     def test_agent_card_skill_ids(self):
         """Skill IDs should match expected values."""
         from app.agent import create_agent_card
 
-        card = create_agent_card(port=9100)
+        card = create_agent_card()
         skill_ids = {s.id for s in card.skills}
         expected = {"query_receipts", "spending_analysis", "price_comparison", "smart_list"}
         assert skill_ids == expected

@@ -285,22 +285,24 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def create_agent_card(port: int = 9100) -> AgentCard:
+def create_agent_card(public_url: str = "http://receipts-agent:9100") -> AgentCard:
     """Create the A2A Agent Card for the Receipts Agent.
 
     Args:
-        port: Port the agent is running on.
+        public_url: URL where this agent is reachable by clients (Docker hostname).
 
     Returns:
         Configured AgentCard with name, capabilities, and 4 skills.
     """
+    # Ensure URL ends with /
+    card_url = public_url.rstrip("/") + "/"
     return AgentCard(
         name="Receipts Agent",
         description=(
             "Analyzes shopping receipts, tracks spending patterns, "
             "monitors prices, and provides purchase insights."
         ),
-        url=f"http://localhost:{port}/",
+        url=card_url,
         version="0.2.0",
         default_input_modes=["text"],
         default_output_modes=["text"],

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     MCP_URL: str
     CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     PORT: int = 9100
+    PUBLIC_URL: str = "http://receipts-agent:9100"
     MAX_MEMORIES: int = 200
     MEMORY_PROMPT_LIMIT: int = 20
     DATABASE_PATH: str = "/app/data/memory.db"
