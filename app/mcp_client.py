@@ -47,6 +47,8 @@ class MCPClient:
         the session is None or has been closed. Handles reconnection
         on failure.
 
+        Supports both streamable-http (/mcp) and SSE (/sse) transports.
+
         Returns:
             An initialized ClientSession ready for tool calls.
         """
@@ -54,16 +56,30 @@ class MCPClient:
             return self._session
 
         from mcp import ClientSession
-        from mcp.client.sse import sse_client
 
         logger.info("Connecting to MCP server at %s", self.mcp_url)
 
-        self._sse_cm = sse_client(
-            self.mcp_url,
-            timeout=SSE_CONNECT_TIMEOUT,
-            sse_read_timeout=SSE_READ_TIMEOUT,
-        )
-        read_stream, write_stream = await self._sse_cm.__aenter__()
+        # Use streamable HTTP transport for /mcp, SSE for /sse
+        if self.mcp_url.endswith("/sse"):
+            from mcp.client.sse import sse_client
+
+            self._sse_cm = sse_client(
+                self.mcp_url,
+                timeout=SSE_CONNECT_TIMEOUT,
+                sse_read_timeout=SSE_READ_TIMEOUT,
+            )
+        else:
+            from mcp.client.streamable_http import streamable_http_client
+
+            self._sse_cm = streamable_http_client(self.mcp_url)
+
+        transport_result = await self._sse_cm.__aenter__()
+        # streamable_http_client returns (read, write, session_id)
+        # sse_client returns (read, write)
+        if len(transport_result) == 3:
+            read_stream, write_stream, _ = transport_result
+        else:
+            read_stream, write_stream = transport_result
 
         self._session_cm = ClientSession(read_stream, write_stream)
         self._session = await self._session_cm.__aenter__()
