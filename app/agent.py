@@ -508,23 +508,12 @@ class ReceiptsAgentExecutor(AgentExecutor):
                         messages=messages,
                     )
 
-                    logger.info(
-                        "Claude response: stop_reason=%s, blocks=%d",
-                        response.stop_reason,
-                        len(response.content),
-                    )
-                    for block in response.content:
-                        logger.info("  Block: type=%s", block.type)
-                        if block.type == "text":
-                            logger.info("  Text: %s", block.text[:100] if block.text else "(empty)")
-
                     if response.stop_reason == "end_turn":
                         # Extract text content
                         text_parts = [
                             block.text for block in response.content if block.type == "text"
                         ]
                         final_text = "\n".join(text_parts) if text_parts else ""
-                        logger.info("Final text length: %d", len(final_text))
                         await event_queue.enqueue_event(new_agent_text_message(final_text))
                         return
 
