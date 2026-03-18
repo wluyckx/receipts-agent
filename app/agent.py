@@ -481,11 +481,8 @@ class ReceiptsAgentExecutor(AgentExecutor):
             context: The A2A request context containing the user message.
             event_queue: Queue for sending response events.
         """
-        # 1. Extract user query
-        user_input = context.get_user_input()
-        user_text = ""
-        if user_input and user_input.parts:
-            user_text = user_input.parts[0].text
+        # 1. Extract user query (get_user_input returns a string in a2a-sdk)
+        user_text = context.get_user_input() or ""
 
         logger.info("Processing query: %s", user_text[:100])
 

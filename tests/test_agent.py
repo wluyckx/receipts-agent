@@ -95,11 +95,7 @@ class TestAgentExecutor:
     def _make_context(self, text="How much did I spend on groceries?"):
         """Create a mock RequestContext with user message."""
         context = MagicMock()
-        message = MagicMock()
-        part = MagicMock()
-        part.text = text
-        message.parts = [part]
-        context.get_user_input.return_value = message
+        context.get_user_input.return_value = text
         return context
 
     def _make_text_response(self, text="You spent €123.45 on groceries."):
