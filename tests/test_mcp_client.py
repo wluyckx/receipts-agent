@@ -172,11 +172,10 @@ class TestMCPClientConnection:
 
         client = MCPClient(mcp_url="http://test:8000/sse")
         client._session = MagicMock()
-        client._session_cm = AsyncMock()
-        client._sse_cm = AsyncMock()
+        mock_stack = AsyncMock()
+        client._exit_stack = mock_stack
 
         await client.close()
 
         assert client._session is None
-        assert client._session_cm is None
-        assert client._sse_cm is None
+        assert client._exit_stack is None

@@ -37,8 +37,7 @@ class MCPClient:
     def __init__(self, mcp_url: str) -> None:
         self.mcp_url = mcp_url
         self._session: Any = None
-        self._sse_cm: Any = None  # SSE context manager
-        self._session_cm: Any = None  # ClientSession context manager
+        self._exit_stack: Any = None
 
     async def _ensure_session(self) -> Any:
         """Get or create an initialized MCP ClientSession.
@@ -55,34 +54,36 @@ class MCPClient:
         if self._session is not None:
             return self._session
 
+        from contextlib import AsyncExitStack
+
         from mcp import ClientSession
 
         logger.info("Connecting to MCP server at %s", self.mcp_url)
+
+        self._exit_stack = AsyncExitStack()
+        await self._exit_stack.__aenter__()
 
         # Use streamable HTTP transport for /mcp, SSE for /sse
         if self.mcp_url.endswith("/sse"):
             from mcp.client.sse import sse_client
 
-            self._sse_cm = sse_client(
-                self.mcp_url,
-                timeout=SSE_CONNECT_TIMEOUT,
-                sse_read_timeout=SSE_READ_TIMEOUT,
+            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                sse_client(
+                    self.mcp_url,
+                    timeout=SSE_CONNECT_TIMEOUT,
+                    sse_read_timeout=SSE_READ_TIMEOUT,
+                )
             )
         else:
             from mcp.client.streamable_http import streamable_http_client
 
-            self._sse_cm = streamable_http_client(self.mcp_url)
+            read_stream, write_stream, _ = await self._exit_stack.enter_async_context(
+                streamable_http_client(self.mcp_url)
+            )
 
-        transport_result = await self._sse_cm.__aenter__()
-        # streamable_http_client returns (read, write, session_id)
-        # sse_client returns (read, write)
-        if len(transport_result) == 3:
-            read_stream, write_stream, _ = transport_result
-        else:
-            read_stream, write_stream = transport_result
-
-        self._session_cm = ClientSession(read_stream, write_stream)
-        self._session = await self._session_cm.__aenter__()
+        self._session = await self._exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
         await self._session.initialize()
 
         logger.info("MCP session established")
@@ -90,19 +91,13 @@ class MCPClient:
 
     async def _reset_session(self) -> None:
         """Close and discard the current session so next call reconnects."""
-        if self._session_cm is not None:
+        if hasattr(self, "_exit_stack") and self._exit_stack is not None:
             try:
-                await self._session_cm.__aexit__(None, None, None)
+                await self._exit_stack.__aexit__(None, None, None)
             except Exception:
                 pass
-        if self._sse_cm is not None:
-            try:
-                await self._sse_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
+            self._exit_stack = None
         self._session = None
-        self._session_cm = None
-        self._sse_cm = None
 
     async def close(self) -> None:
         """Cleanly close the MCP session and SSE connection."""
