@@ -89,6 +89,7 @@ class TestAgentExecutor:
         settings.MCP_URL = "http://shopping-mcp:8000/sse"
         settings.CLAUDE_MODEL = "claude-sonnet-4-20250514"
         settings.MEMORY_PROMPT_LIMIT = 20
+        settings.MAX_MEMORIES = 200
         return settings
 
     def _make_context(self, text="How much did I spend on groceries?"):
@@ -189,7 +190,7 @@ class TestAgentExecutor:
 
         # Mock MCP client — query_readonly uses execute_query
         mock_mcp = AsyncMock()
-        mock_mcp.execute_query = AsyncMock(return_value="42")
+        mock_mcp.call_tool = AsyncMock(return_value="42")
         executor.mcp_client = mock_mcp
 
         # First call returns tool_use, second returns text
@@ -219,7 +220,7 @@ class TestAgentExecutor:
         executor = ReceiptsAgentExecutor(settings=settings, db_path=db_path)
 
         mock_mcp = AsyncMock()
-        mock_mcp.execute_query = AsyncMock(return_value="data")
+        mock_mcp.call_tool = AsyncMock(return_value="data")
         executor.mcp_client = mock_mcp
 
         mock_client = AsyncMock()
@@ -248,7 +249,7 @@ class TestAgentExecutor:
         executor = ReceiptsAgentExecutor(settings=settings, db_path=db_path)
 
         mock_mcp = AsyncMock()
-        mock_mcp.execute_query = AsyncMock(return_value="data")
+        mock_mcp.call_tool = AsyncMock(return_value="data")
         executor.mcp_client = mock_mcp
 
         # Always returns tool_use, never text
@@ -279,7 +280,7 @@ class TestAgentExecutor:
         executor = ReceiptsAgentExecutor(settings=settings, db_path=db_path)
 
         mock_mcp = AsyncMock()
-        mock_mcp.execute_query = AsyncMock(side_effect=RuntimeError("MCP tool error: bad SQL"))
+        mock_mcp.call_tool = AsyncMock(side_effect=RuntimeError("MCP tool error: bad SQL"))
         executor.mcp_client = mock_mcp
 
         # First call: tool_use, but tool execution fails -> error result to Claude

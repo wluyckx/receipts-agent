@@ -66,19 +66,23 @@ async def save_insight(
     user_id: str,
     content: str,
     category: str = "insight",
+    max_memories: int = 200,
 ) -> dict:
-    """Store a derived insight in the memories table.
+    """Store or update a derived insight in the memories table.
 
     Deduplicates via content_hash (SHA-256 of normalized content).
+    On duplicate, updates the content and updated_at (upsert pattern).
+    Enforces max_memories capacity by evicting oldest when over limit.
 
     Args:
         db: Open aiosqlite connection.
         user_id: User identifier.
         content: The insight text to store.
         category: One of insight, user_context, observation.
+        max_memories: Maximum memories to retain per user.
 
     Returns:
-        Dict with status ('saved', 'duplicate', or 'error') and optional id.
+        Dict with status ('saved', 'updated', or 'error') and id.
     """
     if category not in VALID_CATEGORIES:
         return {"status": "error", "message": f"Invalid category: {category}"}
@@ -94,11 +98,44 @@ async def save_insight(
                VALUES (?, ?, ?, ?, ?, 1.0, ?, ?)""",
             (memory_id, user_id, category, content, content_h, now, now),
         )
-        await db.commit()
-        logger.info("Saved memory %s for user %s", memory_id, user_id)
-        return {"status": "saved", "id": memory_id}
+        action = "saved"
+        result_id = memory_id
     except aiosqlite.IntegrityError:
-        return {"status": "duplicate", "message": "Memory already exists"}
+        # Duplicate content_hash — update existing (upsert)
+        await db.execute(
+            """UPDATE memories SET content = ?, updated_at = ?
+               WHERE user_id = ? AND category = ? AND content_hash = ?""",
+            (content, now, user_id, category, content_h),
+        )
+        cursor = await db.execute(
+            "SELECT id FROM memories WHERE user_id = ? AND category = ? AND content_hash = ?",
+            (user_id, category, content_h),
+        )
+        row = await cursor.fetchone()
+        result_id = row[0] if row else memory_id
+        action = "updated"
+
+    # Enforce capacity — evict oldest when over limit
+    cursor = await db.execute(
+        """SELECT COUNT(*) FROM memories
+           WHERE user_id = ?
+           AND (expires_at IS NULL OR expires_at > datetime('now'))""",
+        (user_id,),
+    )
+    (count,) = await cursor.fetchone()
+    if count > max_memories:
+        excess = count - max_memories
+        await db.execute(
+            """DELETE FROM memories WHERE id IN (
+               SELECT id FROM memories WHERE user_id = ?
+               AND (expires_at IS NULL OR expires_at > datetime('now'))
+               ORDER BY created_at ASC LIMIT ?)""",
+            (user_id, excess),
+        )
+
+    await db.commit()
+    logger.info("Memory %s %s for user %s", result_id, action, user_id)
+    return {"status": action, "id": result_id}
 
 
 async def search_memories(
@@ -130,7 +167,8 @@ async def search_memories(
                FROM memories m
                JOIN memories_fts f ON m.rowid = f.rowid
                WHERE memories_fts MATCH ? AND m.user_id = ?
-               ORDER BY m.created_at DESC
+               AND (m.expires_at IS NULL OR m.expires_at > datetime('now'))
+               ORDER BY bm25(memories_fts)
                LIMIT ?""",
             (sanitized, user_id, limit),
         )
@@ -208,8 +246,11 @@ async def log_query_snapshot(
 
     snapshot_json = json.dumps(data_snapshot, default=str)
     if len(snapshot_json) > MAX_SNAPSHOT_BYTES:
-        # Truncate to fit within limit
-        snapshot_json = snapshot_json[:MAX_SNAPSHOT_BYTES]
+        return {
+            "status": "error",
+            "message": f"data_snapshot exceeds {MAX_SNAPSHOT_BYTES} byte limit "
+            f"({len(snapshot_json)} bytes). Reduce the snapshot data.",
+        }
 
     snapshot_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -243,7 +284,8 @@ async def get_recent_memories(
         """SELECT content, category, created_at
            FROM memories
            WHERE user_id = ?
-           ORDER BY created_at DESC
+           AND (expires_at IS NULL OR expires_at > datetime('now'))
+           ORDER BY updated_at DESC
            LIMIT ?""",
         (user_id, limit),
     )

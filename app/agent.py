@@ -29,6 +29,7 @@ from app.prompts import build_system_prompt
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 10
+CLAUDE_TIMEOUT = 120  # seconds — max time for a single Claude API call
 
 # Default user_id — single-user agent for now
 DEFAULT_USER_ID = "default"
@@ -56,12 +57,13 @@ MEMORY_TOOL_NAMES = {
 }
 
 TOOL_DEFINITIONS = [
-    # MCP tools
+    # MCP tools — schemas match actual shopping-mcp tool signatures (mcp_server/app.py)
     {
         "name": "query_readonly",
         "description": (
             "Execute a read-only SQL query against the shopping receipts PostgreSQL "
-            "database. Returns JSON rows. Max 100 rows. Only SELECT allowed."
+            "database. Returns JSON rows. Max 100 rows. Only SELECT allowed. "
+            "30-second timeout. Use this for ad-hoc queries not covered by curated tools."
         ),
         "input_schema": {
             "type": "object",
@@ -76,77 +78,116 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "spending_by_category",
-        "description": "Get total spending grouped by Google product category for a date range.",
+        "description": (
+            "Get spending breakdown by taxonomy parent category with localised names. "
+            "Returns category, total_cents, item_count."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "start_date": {"type": "string", "description": "Start date (YYYY-MM-DD)"},
-                "end_date": {"type": "string", "description": "End date (YYYY-MM-DD)"},
+                "months": {
+                    "type": "integer",
+                    "description": "Number of months to look back (default 1)",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Locale for category names — nl, fr, or en (default nl)",
+                },
             },
-            "required": ["start_date", "end_date"],
         },
     },
     {
         "name": "spending_by_store",
-        "description": "Get total spending grouped by store brand for a date range.",
+        "description": (
+            "Get spending totals by store brand for the last N months. "
+            "Returns store, trips, total_cents, savings_cents."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "start_date": {"type": "string", "description": "Start date (YYYY-MM-DD)"},
-                "end_date": {"type": "string", "description": "End date (YYYY-MM-DD)"},
+                "months": {
+                    "type": "integer",
+                    "description": "Number of months to look back (default 1)",
+                },
             },
-            "required": ["start_date", "end_date"],
         },
     },
     {
         "name": "price_history",
-        "description": "Get price history for a product by article number or name search.",
+        "description": (
+            "Get price history for a product over time. Searches by product name substring. "
+            "Returns product_name, unit_cents, date, store."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "product": {"type": "string", "description": "Article number or product name"},
-                "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "product_name": {
+                    "type": "string",
+                    "description": 'Product name or partial name (e.g. "mozzarella")',
+                },
+                "months": {
+                    "type": "integer",
+                    "description": "How many months of history (default 6)",
+                },
             },
-            "required": ["product"],
+            "required": ["product_name"],
         },
     },
     {
         "name": "purchase_frequency",
-        "description": "Get purchase frequency stats for products in a category.",
+        "description": (
+            "Get purchase frequency and pattern for a product concept. "
+            "Returns product_name, purchase_count, first/last_purchase, avg_price_cents."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "category": {"type": "string", "description": "Google product category name"},
-                "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "product_name": {
+                    "type": "string",
+                    "description": 'Product name or partial name (e.g. "boter", "eggs")',
+                },
             },
-            "required": ["category"],
+            "required": ["product_name"],
         },
     },
     {
         "name": "last_purchase",
-        "description": "Get the most recent purchase of a product by name search.",
+        "description": (
+            "Find when a product was last purchased. "
+            "Returns product_name, unit_cents, purchase_ts, store."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "product": {"type": "string", "description": "Product name to search"},
+                "product_name": {
+                    "type": "string",
+                    "description": 'Product name or partial name (e.g. "melk", "kefir")',
+                },
             },
-            "required": ["product"],
+            "required": ["product_name"],
         },
     },
     {
         "name": "receipt_summary",
-        "description": "Get a summary of a specific receipt by hash.",
+        "description": (
+            "Get a summary of recent receipts. "
+            "Returns date, store, total_cents, xtra_savings_cents, items."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "receipt_hash": {"type": "string", "description": "Receipt hash identifier"},
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back (default 7)",
+                },
             },
-            "required": ["receipt_hash"],
         },
     },
     {
         "name": "list_tables",
-        "description": "List all tables and views in the shopping database.",
+        "description": (
+            "List all available tables and views in the shopping database with row counts."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -154,11 +195,14 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "describe_table",
-        "description": "Get column definitions for a database table or view.",
+        "description": "Show columns, types, and constraints for a table.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "table_name": {"type": "string", "description": "Table or view name"},
+                "table_name": {
+                    "type": "string",
+                    "description": "Name of the table or view to describe",
+                },
             },
             "required": ["table_name"],
         },
@@ -324,14 +368,16 @@ class ReceiptsAgentExecutor(AgentExecutor):
         self.settings = settings
         self.db_path = db_path
         self.mcp_client = MCPClient(settings.MCP_URL)
-        self.anthropic = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.anthropic = anthropic.AsyncAnthropic(
+            api_key=settings.ANTHROPIC_API_KEY,
+            timeout=CLAUDE_TIMEOUT,
+        )
 
     async def _execute_mcp_tool(self, tool_name: str, tool_input: dict) -> str:
-        """Forward a tool call to the MCP server via session.
+        """Forward a tool call to the MCP server.
 
-        Uses the MCPClient's internal session to call tools by name.
-        For query_readonly, uses the dedicated execute_query method.
-        For other tools, gets a session and calls the tool directly.
+        Uses MCPClient.call_tool() which manages session lifecycle,
+        automatic reconnection, and error handling.
 
         Args:
             tool_name: Name of the MCP tool.
@@ -343,16 +389,7 @@ class ReceiptsAgentExecutor(AgentExecutor):
         Raises:
             RuntimeError: If MCP returns an error.
         """
-        if tool_name == "query_readonly":
-            return await self.mcp_client.execute_query(tool_input.get("sql", ""))
-
-        # For other curated tools, get a session and call directly
-        session = await self.mcp_client._get_session()
-        result = await session.call_tool(tool_name, tool_input)
-        if result.isError:
-            error_text = result.content[0].text if result.content else "Unknown error"
-            raise RuntimeError(f"MCP tool error: {error_text}")
-        return result.content[0].text if result.content else ""
+        return await self.mcp_client.call_tool(tool_name, tool_input)
 
     async def _execute_memory_tool(
         self, db: aiosqlite.Connection, tool_name: str, tool_input: dict
@@ -373,6 +410,7 @@ class ReceiptsAgentExecutor(AgentExecutor):
                 DEFAULT_USER_ID,
                 tool_input["content"],
                 category=tool_input.get("category", "insight"),
+                max_memories=self.settings.MAX_MEMORIES,
             )
         elif tool_name == "search_memories":
             result = await memory.search_memories(

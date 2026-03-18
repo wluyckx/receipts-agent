@@ -89,19 +89,35 @@ class TestSaveInsight:
         assert row[1] == "insight"
 
     @pytest.mark.asyncio
-    async def test_save_insight_dedup(self, memory_db):
-        """Same content_hash should not create a duplicate."""
+    async def test_save_insight_dedup_upserts(self, memory_db):
+        """Same content_hash should update existing (upsert), not create duplicate."""
         from app.memory import save_insight
 
         await save_insight(memory_db, USER_ID, "Milk is expensive")
         result = await save_insight(memory_db, USER_ID, "Milk is expensive")
-        assert result["status"] == "duplicate"
+        assert result["status"] == "updated"
+        assert "id" in result
 
         cursor = await memory_db.execute(
             "SELECT COUNT(*) FROM memories WHERE user_id = ?", (USER_ID,)
         )
         row = await cursor.fetchone()
         assert row[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_save_insight_capacity_enforcement(self, memory_db):
+        """Should evict oldest memories when over max_memories limit."""
+        from app.memory import save_insight
+
+        # Insert 5 memories with max_memories=3
+        for i in range(5):
+            await save_insight(memory_db, USER_ID, f"unique memory {i}", max_memories=3)
+
+        cursor = await memory_db.execute(
+            "SELECT COUNT(*) FROM memories WHERE user_id = ?", (USER_ID,)
+        )
+        row = await cursor.fetchone()
+        assert row[0] <= 3
 
     @pytest.mark.asyncio
     async def test_save_insight_categories(self, memory_db):
@@ -209,23 +225,27 @@ class TestLogQuerySnapshot:
         assert row[1] == "spending"
 
     @pytest.mark.asyncio
-    async def test_log_query_snapshot_data_limit(self, memory_db):
-        """data_snapshot should be capped at 4KB."""
+    async def test_log_query_snapshot_data_limit_rejects_oversized(self, memory_db):
+        """data_snapshot exceeding 4KB should be rejected (not truncated)."""
         from app.memory import log_query_snapshot
 
-        # Create a data_snapshot larger than 4KB
         big_data = {"values": "x" * 5000}
         result = await log_query_snapshot(
             memory_db, USER_ID, "big query", "spending", "summary", big_data
         )
-        assert result["status"] == "saved"
+        assert result["status"] == "error"
+        assert "limit" in result["message"].lower()
 
-        cursor = await memory_db.execute(
-            "SELECT data_snapshot FROM query_snapshots WHERE user_id = ?", (USER_ID,)
+    @pytest.mark.asyncio
+    async def test_log_query_snapshot_small_data_ok(self, memory_db):
+        """data_snapshot under 4KB should be saved normally."""
+        from app.memory import log_query_snapshot
+
+        small_data = {"total": 5000, "items": 42}
+        result = await log_query_snapshot(
+            memory_db, USER_ID, "small query", "spending", "summary", small_data
         )
-        row = await cursor.fetchone()
-        snapshot_str = row[0]
-        assert len(snapshot_str) <= 4096
+        assert result["status"] == "saved"
 
 
 class TestGetRecentMemories:
@@ -244,3 +264,43 @@ class TestGetRecentMemories:
         # Should have content and category fields
         assert "content" in results[0]
         assert "category" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_get_recent_memories_excludes_expired(self, memory_db):
+        """Expired memories should not be returned."""
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        from app.memory import get_recent_memories
+
+        now = datetime.now(timezone.utc)
+        past = (now - timedelta(days=1)).isoformat()
+        now_str = now.isoformat()
+
+        # Insert an expired memory directly
+        await memory_db.execute(
+            "INSERT INTO memories (id, user_id, category, content, content_hash, "
+            "created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                USER_ID,
+                "insight",
+                "expired insight",
+                "h_exp",
+                now_str,
+                now_str,
+                past,
+            ),
+        )
+        # Insert a non-expired memory
+        await memory_db.execute(
+            "INSERT INTO memories (id, user_id, category, content, content_hash, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), USER_ID, "insight", "valid insight", "h_val", now_str, now_str),
+        )
+        await memory_db.commit()
+
+        results = await get_recent_memories(memory_db, USER_ID)
+        contents = [r["content"] for r in results]
+        assert "valid insight" in contents
+        assert "expired insight" not in contents
