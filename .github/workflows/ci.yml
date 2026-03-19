@@ -26,6 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ".[dev]"
+      - run: python scripts/validate_skills.py
       - run: pytest -v
         env:
           ANTHROPIC_API_KEY: sk-ant-test
