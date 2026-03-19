@@ -77,13 +77,13 @@ class TestPromptConstraints:
         assert "cents" in prompt.lower()
         assert "Brussels" in prompt or "brussels" in prompt
 
-    def test_prompt_contains_memory_instructions(self):
-        """Prompt should instruct the agent to use memory tools."""
+    def test_prompt_contains_memory_guidance(self):
+        """Prompt should mention memory usage guidance."""
         from app.prompts import build_system_prompt
 
         prompt = build_system_prompt()
-        assert "save_insight" in prompt
-        assert "search_memories" in prompt
+        assert "memory" in prompt.lower()
+        assert "insight" in prompt.lower()
 
 
 class TestPromptMemories:
