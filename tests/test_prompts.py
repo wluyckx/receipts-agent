@@ -2,55 +2,40 @@
 Tests for Receipts Agent system prompt construction.
 
 CHANGELOG:
+- 2026-03-19: Update for skill-based architecture — schema moved to skill (STORY-078)
 - 2026-03-18: Prompt content tests (STORY-074)
 """
 
+from app.skills.registry import load_skills
 
-class TestPromptSchema:
-    """System prompt must include key database schema tables."""
 
-    def test_prompt_contains_receipts_table(self):
-        """Prompt should reference the receipts table and its key columns."""
+class TestPromptBaseContent:
+    """Base system prompt should contain core elements but NOT the schema."""
+
+    def test_base_prompt_does_not_contain_schema(self):
+        """Schema is now in the receipt-schema skill, not the base prompt."""
         from app.prompts import build_system_prompt
 
         prompt = build_system_prompt()
-        assert "receipts" in prompt.lower()
-        assert "receipt_hash" in prompt
-        assert "total_cents" in prompt
+        # The old DATABASE_SCHEMA block with table definitions should be gone
+        assert "product_price_history (article_nr" not in prompt
+        assert "stores (store_id PK" not in prompt
 
-    def test_prompt_contains_product_price_history(self):
-        """Prompt should reference the product_price_history table."""
+    def test_prompt_contains_efficiency_rules(self):
+        """Base prompt should have efficiency rules for 1-2 tool calls."""
         from app.prompts import build_system_prompt
 
         prompt = build_system_prompt()
-        assert "product_price_history" in prompt
-        assert "article_nr" in prompt
-        assert "unit_cents" in prompt
+        assert "1-2 tool calls" in prompt
 
-    def test_prompt_contains_stores(self):
-        """Prompt should reference the stores table."""
+    def test_prompt_contains_skill_index(self):
+        """Base prompt should include the skill index listing available expertise."""
         from app.prompts import build_system_prompt
 
         prompt = build_system_prompt()
-        assert "stores" in prompt
-        assert "brand" in prompt
-        assert "store_id" in prompt
-
-    def test_prompt_contains_taxonomy(self):
-        """Prompt should reference google_product_taxonomy."""
-        from app.prompts import build_system_prompt
-
-        prompt = build_system_prompt()
-        assert "google_product_taxonomy" in prompt
-        assert "category_path" in prompt
-
-    def test_prompt_contains_smart_list(self):
-        """Prompt should reference smart_list_scores."""
-        from app.prompts import build_system_prompt
-
-        prompt = build_system_prompt()
-        assert "smart_list_scores" in prompt
-        assert "urgency_level" in prompt
+        assert "Available expertise" in prompt
+        assert "receipt-schema" in prompt
+        assert "spending-analytics" in prompt
 
 
 class TestPromptConstraints:
@@ -120,3 +105,39 @@ class TestPromptMemories:
         # No memories section header when empty
         prompt2 = build_system_prompt(memories=[])
         assert len(prompt2) > 100
+
+
+class TestPromptSkillsContent:
+    """System prompt should inject skill content when provided."""
+
+    def test_skills_content_injected(self):
+        """Skills content should appear in the prompt when provided."""
+        from app.prompts import build_system_prompt
+
+        skills = load_skills(["spending-analytics"])
+        prompt = build_system_prompt(skills_content=skills)
+        assert "Spending Analytics" in prompt
+        assert "SELECT" in prompt
+
+    def test_skills_content_empty_by_default(self):
+        """When no skills_content is provided, prompt still works."""
+        from app.prompts import build_system_prompt
+
+        prompt = build_system_prompt()
+        assert len(prompt) > 100
+
+    def test_skills_content_with_memories(self):
+        """Skills content and memories should both appear when provided."""
+        from app.prompts import build_system_prompt
+
+        memories = [
+            {
+                "category": "insight",
+                "content": "Test memory",
+                "created_at": "2026-03-15T10:00:00",
+            },
+        ]
+        skills = load_skills(["price-tracking"])
+        prompt = build_system_prompt(memories=memories, skills_content=skills)
+        assert "Test memory" in prompt
+        assert "Price Tracking" in prompt

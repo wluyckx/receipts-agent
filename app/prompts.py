@@ -1,10 +1,12 @@
 """
 System prompt construction for the Receipts Agent.
 
-Builds a context-rich prompt with database schema, Belgian retail context,
-safety constraints, and memory injection for Claude tool-use conversations.
+Builds a context-rich prompt with Belgian retail context, safety constraints,
+memory injection, and skill-based progressive loading for Claude tool-use
+conversations.
 
 CHANGELOG:
+- 2026-03-19: Refactor — move schema to receipt-schema skill, add skills_content (STORY-078)
 - 2026-03-18: Full system prompt with schema, context, memory injection (STORY-074)
 - 2026-03-18: Placeholder created (STORY-073)
 
@@ -12,70 +14,7 @@ TODO:
 - None
 """
 
-DATABASE_SCHEMA = """\
-## Database Schema
-
-### Core Transaction Data
-
-```sql
-receipts (receipt_hash PK, store_id FK, purchase_ts timestamptz, currency text,
-          total_cents int, xtra_savings_cents int)
-
-product_price_history (article_nr text, receipt_hash FK, purchase_ts timestamptz,
-                       product_name text, unit_cents int, quantity_print text,
-                       line_total_cents int, google_category text, google_category_id int)
-
-stores (store_id PK, brand text, name text, city text, country text)
-```
-
-### Product Taxonomy (Google Product Taxonomy, hierarchical)
-
-```sql
-google_product_taxonomy (category_id PK, category_path text, category_name text,
-                         parent_id FK, level int)
-
-google_category_translations (category_id FK, locale varchar, display_name text)
--- locales: nl, fr, en
-```
-
-### Smart Shopping List (ML-scored urgency)
-
-```sql
-smart_list_scores (category_id FK, score float, p_need_by_trip float,
-                   urgency_level text, purchase_reason text, predicted_trip_date date)
-```
-
-### Useful Views
-
-```sql
-recent_purchases (receipt_hash, purchase_ts, brand, store_name, city,
-                  total_cents, item_count, categories)
-
-top_products (article_nr, product_name, google_category, total_spent_cents,
-              purchase_count, avg_unit_price_cents)
-
-store_performance (brand, store_name, city, receipt_count, total_spent_cents,
-                   avg_receipt_total_cents)
-
-category_totals (google_category, lifetime_total_cents, receipt_count,
-                 item_count, avg_unit_price_cents)
-
-daily_spending (purchase_date, google_category, total_cents, item_count)
-```
-
-### Product Hierarchy
-
-```sql
-generic_products (generic_product_id PK, generic_product_name text,
-                  google_category text, name_nl text, name_en text, is_staple bool)
-
-base_products (base_product_id PK, base_product_name text,
-               generic_product_id FK, google_category text)
-
-retail_products (retail_product_id PK, product_name text, base_product_id FK,
-                 generic_product_id FK, store_brand text)
-```
-"""
+from app.skills.registry import get_skill_index
 
 BELGIAN_CONTEXT = """\
 ## Belgian Retail Context
@@ -111,13 +50,11 @@ BASE_PROMPT = """\
 You are the Receipts Agent, a specialized data assistant for shopping receipts.
 
 ## Efficiency Rules
-- Answer in 1-2 tool calls maximum. Use `query_readonly` for precise SQL.
-- Use curated tools (spending_by_category, price_history, etc.) when they fit exactly.
-- Fall back to `query_readonly` with a single well-crafted SQL query otherwise.
-- Return concise data — the orchestrating agent will format the final answer.
-- Do NOT explore the schema or list tables — the schema is provided below.
-
-{schema}
+- Answer in 1-2 tool calls maximum.
+- Use the SQL patterns provided in your loaded expertise below.
+- If an SQL pattern matches, copy it and fill in the placeholders.
+- For queries not covered by patterns, write a single precise query_readonly call.
+- Return concise data — the orchestrating agent formats the final answer.
 
 {belgian_context}
 
@@ -126,6 +63,10 @@ You are the Receipts Agent, a specialized data assistant for shopping receipts.
 {memory_instructions}
 
 {memories_section}
+
+{skill_index}
+
+{skills_content}
 """
 
 
@@ -151,12 +92,19 @@ def _format_memories(memories: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(memories: list[dict] | None = None) -> str:
-    """Build the full system prompt for Claude with schema, context, and memories.
+def build_system_prompt(
+    memories: list[dict] | None = None,
+    skills_content: str = "",
+) -> str:
+    """Build the full system prompt for Claude with context, memories, and skills.
+
+    The database schema is no longer embedded in the base prompt. It is loaded
+    on demand via the receipt-schema skill, keeping the base prompt lean.
 
     Args:
         memories: Optional list of memory dicts to inject. Each dict should have
             category, content, and created_at keys.
+        skills_content: Pre-loaded skill markdown content to inject.
 
     Returns:
         Complete system prompt string.
@@ -164,9 +112,10 @@ def build_system_prompt(memories: list[dict] | None = None) -> str:
     memories_section = _format_memories(memories) if memories else ""
 
     return BASE_PROMPT.format(
-        schema=DATABASE_SCHEMA,
         belgian_context=BELGIAN_CONTEXT,
         safety=SAFETY_CONSTRAINTS,
         memory_instructions=MEMORY_INSTRUCTIONS,
         memories_section=memories_section,
+        skill_index=get_skill_index(),
+        skills_content=skills_content,
     )

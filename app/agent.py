@@ -5,6 +5,7 @@ Implements a Claude tool-use loop that forwards MCP tools to shopping-mcp
 and handles local memory tools for persistent insights.
 
 CHANGELOG:
+- 2026-03-19: Integrate skill classification and progressive loading (STORY-078)
 - 2026-03-18: Claude tool-use loop, memory tools, 4 real skills (STORY-074)
 - 2026-03-18: Initial echo executor and agent card (STORY-073)
 
@@ -25,6 +26,7 @@ from a2a.utils import new_agent_text_message
 from app import memory
 from app.mcp_client import MCPClient
 from app.prompts import build_system_prompt
+from app.skills.registry import classify_skills, load_skills
 
 logger = logging.getLogger(__name__)
 
@@ -495,10 +497,19 @@ class ReceiptsAgentExecutor(AgentExecutor):
                     db, DEFAULT_USER_ID, limit=self.settings.MEMORY_PROMPT_LIMIT
                 )
 
-                # 3. Build system prompt
-                system_prompt = build_system_prompt(memories=recent if recent else None)
+                # 3. Classify and load skills for this query
+                skill_ids = classify_skills(user_text)
+                if skill_ids and "receipt-schema" not in skill_ids:
+                    skill_ids.append("receipt-schema")
+                skills_content = load_skills(skill_ids)
 
-                # 4-7. Claude tool-use loop
+                # 4. Build system prompt with skills
+                system_prompt = build_system_prompt(
+                    memories=recent if recent else None,
+                    skills_content=skills_content,
+                )
+
+                # 5-8. Claude tool-use loop
                 messages = [{"role": "user", "content": user_text}]
 
                 for _round in range(MAX_TOOL_ROUNDS):
