@@ -16,7 +16,11 @@ from pathlib import Path
 
 SKILLS: dict[str, dict] = {
     "receipt-schema": {
-        "keywords": ["schema", "table", "column", "join", "query", "sql"],
+        "keywords": [
+            "schema", "table", "column", "join", "query", "sql",
+            "receipt", "product", "store", "bought", "purchased",
+            "kassabon", "winkel", "gekocht",
+        ],
         "file": "app/skills/receipt-schema/SKILL.md",
         "description": "Full database schema with column descriptions and JOIN patterns",
     },
@@ -62,8 +66,13 @@ SKILLS: dict[str, dict] = {
             "prediction",
             "urgency",
             "trip",
+            "recent",
+            "last",
+            "latest",
+            "frequent",
             "boodschappen",
             "nodig",
+            "laatste",
         ],
         "file": "app/skills/smart-list/SKILL.md",
         "description": "ML score interpretation and consumption pattern queries",

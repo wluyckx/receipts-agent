@@ -498,8 +498,9 @@ class ReceiptsAgentExecutor(AgentExecutor):
                 )
 
                 # 3. Classify and load skills for this query
+                # Always load receipt-schema — every query needs schema context
                 skill_ids = classify_skills(user_text)
-                if skill_ids and "receipt-schema" not in skill_ids:
+                if "receipt-schema" not in skill_ids:
                     skill_ids.append("receipt-schema")
                 skills_content = load_skills(skill_ids)
 
