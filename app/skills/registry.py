@@ -68,6 +68,24 @@ SKILLS: dict[str, dict] = {
         "file": "app/skills/smart-list/SKILL.md",
         "description": "ML score interpretation and consumption pattern queries",
     },
+    "belgian-context": {
+        "keywords": [
+            "belgium",
+            "belgian",
+            "belgi",
+            "colruyt",
+            "delhaize",
+            "lidl",
+            "aldi",
+            "carrefour",
+            "xtra",
+            "statiegeld",
+            "feestdag",
+            "holiday",
+        ],
+        "file": "app/skills/belgian-context/SKILL.md",
+        "description": "Belgian retail landscape, holidays, food culture",
+    },
 }
 
 
